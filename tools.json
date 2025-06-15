@@ -1,0 +1,38 @@
+{
+  "Information Gathering": [
+    {
+      "name": "nmap",
+      "description": "A powerful network scanner for host discovery and security auditing.",
+      "basic": "nmap -sV target_ip",
+      "intermediate": "nmap -A -p 1-65535 target_ip"
+    },
+    {
+      "name": "whois",
+      "description": "Fetches domain and IP registration info.",
+      "basic": "whois example.com",
+      "intermediate": "whois -H example.com"
+    }
+  ],
+  "Password Attacks": [
+    {
+      "name": "hydra",
+      "description": "Fast network logon cracker supporting many protocols.",
+      "basic": "hydra -l user -P passlist.txt ssh://target_ip",
+      "intermediate": "hydra -L users.txt -P passlist.txt ssh://target_ip -t 16"
+    },
+    {
+      "name": "john",
+      "description": "Popular password cracking tool.",
+      "basic": "john --wordlist=password.lst hashfile",
+      "intermediate": "john --rules --wordlist=password.lst hashfile"
+    }
+  ],
+  "Exploitation Tools": [
+    {
+      "name": "metasploit",
+      "description": "A framework for developing and executing exploit code.",
+      "basic": "msfconsole",
+      "intermediate": "use exploit/windows/smb/ms17_010_eternalblue"
+    }
+  ]
+}

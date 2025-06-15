@@ -1,210 +1,304 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, CallbackQueryHandler,
-    MessageHandler, filters, ContextTypes
-)
+import json
 import logging
+from telegram import (
+    Update,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+)
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+)
 
-# Enable logging for easier debugging
+# Put your Telegram bot token here (keep it secret!)
+TOKEN = "8124805095:AAHpMKmdGzsZdHY1aw-TrfctMEQO7WaslAk"
+
+# Enable logging for debugging
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Your Telegram bot token here (replace with your actual token)
-TOKEN = "8124805095:AAHpMKmdGzsZdHY1aw-TrfctMEQO7WaslAk"
+# Load Kali tools and commands from tools.json
+with open("tools.json", "r", encoding="utf-8") as f:
+    tools_data = json.load(f)
 
-# Sample data for Kali tools explanations
-TOOLS_INFO = {
-    "nmap": "Nmap (Network Mapper) is a powerful open source tool used for network discovery and security auditing.",
-    "netcat": "Netcat (nc) is a versatile networking tool used for reading/writing across network connections using TCP or UDP.",
-    "hydra": "Hydra is a fast and flexible login cracker which supports many protocols to perform brute force attacks."
-}
+# State storage for quizzes (in-memory)
+user_states = {}
 
-# Quiz questions and answers
-QUIZ_QUESTIONS = [
-    {
-        "question": "What command is used for network scanning in Kali Linux?",
-        "options": ["hydra", "nmap", "netcat", "john"],
-        "answer": "nmap"
-    },
-    {
-        "question": "Which tool is used for brute forcing passwords?",
-        "options": ["hydra", "nmap", "tcpdump", "wireshark"],
-        "answer": "hydra"
-    },
-    {
-        "question": "Netcat is primarily used for?",
-        "options": ["Password cracking", "Network scanning", "Reading/writing network connections", "Packet sniffing"],
-        "answer": "Reading/writing network connections"
-    }
-]
+# Constants
+ITEMS_PER_PAGE = 5
 
-# To keep track of quiz states per user (simple in-memory, lost on restart)
-user_quiz_states = {}
-
-# Start command handler - main menu
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send main menu."""
     keyboard = [
-        [InlineKeyboardButton("Learn a Tool 🔧", callback_data='learn_tool')],
-        [InlineKeyboardButton("Daily Practice 💪", callback_data='daily_practice')],
-        [InlineKeyboardButton("Ask a Command 🧠", callback_data='ask_command')],
-        [InlineKeyboardButton("Kali Quiz 🎮", callback_data='kali_quiz')],
-        [InlineKeyboardButton("Career Tips 👨‍💻", callback_data='career_tips')],
+        [InlineKeyboardButton("Learn Kali Tools", callback_data="learn_tools_0")],
+        [InlineKeyboardButton("Practice Challenges", callback_data="practice")],
+        [InlineKeyboardButton("Quiz Yourself", callback_data="quiz_start")],
+        [InlineKeyboardButton("Red Team Roadmap", callback_data="roadmap")],
+        [InlineKeyboardButton("Career Tips", callback_data="career")],
+        [InlineKeyboardButton("Useful Resources", callback_data="resources")],
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        "Welcome to Kali Tutor Bot! Choose an option:",
-        reply_markup=reply_markup
+
+    text = "Welcome to Kali Tutor Bot! Choose an option:"
+
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            text, reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        # It's good to answer the callback to remove the "loading" animation
+        await update.callback_query.answer()
+    else:
+        await update.message.reply_text(
+            text, reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+
+async def show_tools(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int):
+    """Show Kali tools categories with pagination."""
+    categories = list(tools_data.keys())
+    start_index = page * ITEMS_PER_PAGE
+    end_index = start_index + ITEMS_PER_PAGE
+    keyboard = []
+
+    for category in categories[start_index:end_index]:
+        keyboard.append([InlineKeyboardButton(category, callback_data=f"category_{category}")])
+
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"learn_tools_{page-1}"))
+    if end_index < len(categories):
+        nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"learn_tools_{page+1}"))
+
+    if nav_buttons:
+        keyboard.append(nav_buttons)
+
+    keyboard.append([InlineKeyboardButton("Back to Main Menu", callback_data="start")])
+
+    if update.callback_query:
+        await update.callback_query.edit_message_text(
+            "Select a category to learn Kali tools:", reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    else:
+        await update.message.reply_text(
+            "Select a category to learn Kali tools:", reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+async def show_tools_in_category(update: Update, context: ContextTypes.DEFAULT_TYPE, category: str):
+    """Show tools in a chosen category."""
+    tools = tools_data.get(category, [])
+    if not tools:
+        await update.callback_query.answer(text="No tools found in this category.", show_alert=True)
+        return
+
+    keyboard = []
+    for tool in tools:
+        keyboard.append([InlineKeyboardButton(tool['name'], callback_data=f"tool_{category}_{tool['name']}")])
+
+    keyboard.append([InlineKeyboardButton("Back to Categories", callback_data="learn_tools_0")])
+    keyboard.append([InlineKeyboardButton("Back to Main Menu", callback_data="start")])
+
+    await update.callback_query.edit_message_text(
+        f"Tools in category *{category}*:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
     )
 
-# Handle button clicks from inline keyboard
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+async def show_tool_details(update: Update, context: ContextTypes.DEFAULT_TYPE, category: str, tool_name: str):
+    """Show details and commands for a specific Kali tool."""
+    tools = tools_data.get(category, [])
+    tool = next((t for t in tools if t['name'] == tool_name), None)
 
+    if not tool:
+        await update.callback_query.answer(text="Tool not found.", show_alert=True)
+        return
+
+    msg = f"*{tool['name']}*\n_{tool.get('description', 'No description available.')}_\n\n"
+    msg += "*Basic command:*\n"
+    msg += f"`{tool.get('basic', 'N/A')}`\n\n"
+    msg += "*Intermediate command:*\n"
+    msg += f"`{tool.get('intermediate', 'N/A')}`"
+
+    keyboard = [
+        [InlineKeyboardButton("Back to Tools", callback_data=f"category_{category}")],
+        [InlineKeyboardButton("Back to Main Menu", callback_data="main_menu")],
+    ]
+
+    await update.callback_query.edit_message_text(
+        msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
+    )
+
+async def show_practice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show practice challenges placeholder."""
+    text = (
+        "Practice challenges will be added soon!\n"
+        "Meanwhile, you can try labs on sites like Hack The Box or TryHackMe."
+    )
+    keyboard = [[InlineKeyboardButton("Back to Main Menu", callback_data="start")]]
+    await update.callback_query.edit_message_text(
+        text, reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def show_roadmap(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show a brief Red Team roadmap."""
+    roadmap_text = (
+        "Red Team Roadmap Highlights:\n"
+        "- Linux & Command Line Mastery\n"
+        "- Network & Protocol Analysis\n"
+        "- Exploitation Techniques\n"
+        "- Privilege Escalation\n"
+        "- Persistence & Post Exploitation\n"
+        "- AV Evasion\n"
+        "- C2 Frameworks\n"
+        "For detailed roadmap, visit https://redteamroadmap.com/"
+    )
+    keyboard = [[InlineKeyboardButton("Back to Main Menu", callback_data="start")]]
+    await update.callback_query.edit_message_text(
+        roadmap_text, reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def show_career(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show career tips."""
+    career_text = (
+        "Cybersecurity Career Tips:\n"
+        "- Build strong fundamentals\n"
+        "- Get hands-on practice\n"
+        "- Participate in CTFs and bug bounties\n"
+        "- Network with professionals\n"
+        "- Keep learning and updating skills\n"
+        "- Prepare for certifications like OSCP"
+    )
+    keyboard = [[InlineKeyboardButton("Back to Main Menu", callback_data="start")]]
+    await update.callback_query.edit_message_text(
+        career_text, reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def show_resources(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show useful resources."""
+    resources_text = (
+        "Useful Kali Linux Resources:\n"
+        "- Official Kali Docs: https://www.kali.org/docs/\n"
+        "- Offensive Security Training: https://www.offensive-security.com/\n"
+        "- TryHackMe: https://tryhackme.com/\n"
+        "- Hack The Box: https://www.hackthebox.eu/\n"
+        "- OverTheWire Wargames: https://overthewire.org/wargames/"
+    )
+    keyboard = [[InlineKeyboardButton("Back to Main Menu", callback_data="start")]]
+    await update.callback_query.edit_message_text(
+        resources_text, reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+# Quiz questions example
+quiz_questions = [
+    {
+        "question": "Which tool is used for network scanning?",
+        "options": ["nmap", "hydra", "john"],
+        "answer": "nmap",
+    },
+    {
+        "question": "Which tool is used for password cracking?",
+        "options": ["john", "nmap", "netcat"],
+        "answer": "john",
+    },
+    # Add more questions if you want
+]
+
+async def start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.callback_query.from_user.id
+    user_states[user_id] = {"quiz_index": 0, "score": 0}
+    await send_quiz_question(update, context)
+
+async def send_quiz_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.callback_query.from_user.id
+    state = user_states.get(user_id)
+    if not state:
+        return
+    index = state["quiz_index"]
+    if index >= len(quiz_questions):
+        await update.callback_query.edit_message_text(
+            f"Quiz complete! Your score: {state['score']}/{len(quiz_questions)}\n"
+            "Use /start to play again."
+        )
+        user_states.pop(user_id)
+        return
+
+    q = quiz_questions[index]
+    buttons = [
+        [InlineKeyboardButton(opt, callback_data=f"quiz_answer_{opt}")] for opt in q["options"]
+    ]
+    buttons.append([InlineKeyboardButton("Quit Quiz", callback_data="start")])
+
+    await update.callback_query.edit_message_text(
+        q["question"], reply_markup=InlineKeyboardMarkup(buttons)
+    )
+
+async def handle_quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.callback_query.from_user.id
+    state = user_states.get(user_id)
+    if not state:
+        await update.callback_query.answer("No active quiz found. Use /start to begin.")
+        return
+
+    selected = update.callback_query.data.split("_")[-1]
+    index = state["quiz_index"]
+    correct = quiz_questions[index]["answer"]
+
+    if selected == correct:
+        state["score"] += 1
+        reply = "Correct! ✅"
+    else:
+        reply = f"Wrong! ❌ The correct answer was: {correct}"
+
+    state["quiz_index"] += 1
+    await update.callback_query.answer(reply, show_alert=True)
+    await send_quiz_question(update, context)
+
+async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
     data = query.data
 
-    if data == 'learn_tool':
-        # Show list of tools to choose from
-        keyboard = [
-            [InlineKeyboardButton("nmap", callback_data='tool_nmap')],
-            [InlineKeyboardButton("netcat", callback_data='tool_netcat')],
-            [InlineKeyboardButton("hydra", callback_data='tool_hydra')],
-            [InlineKeyboardButton("Back to Main Menu", callback_data='main_menu')]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(
-            text="Choose a Kali tool to learn about:",
-            reply_markup=reply_markup
-        )
-
-    elif data.startswith('tool_'):
-        tool_name = data.split('_')[1]
-        info = TOOLS_INFO.get(tool_name, "Sorry, no info available for this tool yet.")
-        await query.edit_message_text(
-            text=f"**{tool_name.upper()}**\n\n{info}\n\nType /start to return to main menu.",
-            parse_mode='Markdown'
-        )
-
-    elif data == 'daily_practice':
-        await query.edit_message_text(
-            text="Today's practice:\nUse this Nmap command to scan a target:\n\n`nmap -sS <target-ip>`\n\nTry it and let me know if you have questions!"
-            , parse_mode='Markdown'
-        )
-
-    elif data == 'ask_command':
-        await query.edit_message_text(
-            text="Send me a Kali command (e.g., nmap, netcat), and I'll explain it."
-        )
-
-    elif data == 'kali_quiz':
-        # Start quiz for the user
-        user_id = query.from_user.id
-        user_quiz_states[user_id] = {
-            "score": 0,
-            "current_q": 0
-        }
-        await send_quiz_question(user_id, query, context)
-
-    elif data == 'career_tips':
-        tips = (
-            "🛠️ Stay updated with cybersecurity news.\n"
-            "💻 Practice daily on tools like Nmap and Netcat.\n"
-            "📚 Read blogs and watch tutorials.\n"
-            "🔐 Join cybersecurity communities.\n"
-            "🎯 Build your own labs and practice attacks safely."
-        )
-        await query.edit_message_text(tips)
-
-    elif data == 'main_menu':
-        # Go back to main menu
+    if data == "start":
         await start(update, context)
 
-    elif data.startswith('quiz_answer_'):
-        user_id = query.from_user.id
-        selected_answer = data.split('_', 2)[2]
+    elif data.startswith("learn_tools_"):
+        page = int(data.split("_")[-1])
+        await show_tools(update, context, page)
 
-        if user_id not in user_quiz_states:
-            await query.edit_message_text("Please start the quiz first by selecting Kali Quiz 🎮 from the menu.")
-            return
+    elif data.startswith("category_"):
+        category = data.split("_", 1)[1]
+        await show_tools_in_category(update, context, category)
 
-        state = user_quiz_states[user_id]
-        current_q = state["current_q"]
-        correct_answer = QUIZ_QUESTIONS[current_q]["answer"]
+    elif data.startswith("tool_"):
+        _, category, tool_name = data.split("_", 2)
+        await show_tool_details(update, context, category, tool_name)
 
-        if selected_answer == correct_answer:
-            state["score"] += 1
-            reply = "✅ Correct!"
-        else:
-            reply = f"❌ Wrong! The correct answer was: {correct_answer}"
+    elif data == "practice":
+        await show_practice(update, context)
 
-        # Move to next question
-        state["current_q"] += 1
+    elif data == "quiz_start":
+        await start_quiz(update, context)
 
-        if state["current_q"] < len(QUIZ_QUESTIONS):
-            await query.edit_message_text(reply)
-            await send_quiz_question(user_id, query, context)
-        else:
-            final_score = state["score"]
-            total = len(QUIZ_QUESTIONS)
-            await query.edit_message_text(f"{reply}\n\nQuiz complete! Your final score: {final_score}/{total}\n\nType /start to play again.")
-            del user_quiz_states[user_id]
+    elif data.startswith("quiz_answer_"):
+        await handle_quiz_answer(update, context)
 
-async def send_quiz_question(user_id, query, context):
-    state = user_quiz_states[user_id]
-    current_q = state["current_q"]
-    question_data = QUIZ_QUESTIONS[current_q]
+    elif data == "roadmap":
+        await show_roadmap(update, context)
 
-    # Build inline keyboard for options
-    keyboard = []
-    for option in question_data["options"]:
-        callback_data = f"quiz_answer_{option}"
-        keyboard.append([InlineKeyboardButton(option, callback_data=callback_data)])
+    elif data == "career":
+        await show_career(update, context)
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text(question_data["question"], reply_markup=reply_markup)
+    elif data == "resources":
+        await show_resources(update, context)
 
-# Handle free text messages from user (like ask_command feature)
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_text = update.message.text.lower()
-
-    # Basic command explanations
-    if "nmap" in user_text:
-        response = TOOLS_INFO["nmap"]
-    elif "netcat" in user_text or "nc" in user_text:
-        response = TOOLS_INFO["netcat"]
-    elif "hydra" in user_text:
-        response = TOOLS_INFO["hydra"]
     else:
-        response = "Sorry, I can only explain basic Kali Linux tools for now. Try asking about nmap, netcat, or hydra."
-
-    await update.message.reply_text(response)
-
-# Error handler to catch unexpected errors
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.error(msg="Exception while handling an update:", exc_info=context.error)
-    if update and hasattr(update, "message") and update.message:
-        await update.message.reply_text("Oops! Something went wrong. Please try again later.")
+        await query.answer("Unknown command!")
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # Command handlers
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", start))  # same as start
+    app.add_handler(CallbackQueryHandler(callback_handler))
 
-    # Callback query handler for buttons
-    app.add_handler(CallbackQueryHandler(button_handler))
-
-    # Message handler for text messages (ask_command)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    # Error handler
-    app.add_error_handler(error_handler)
-
-    print("Bot started...")
     app.run_polling()
 
 if __name__ == "__main__":
